@@ -1,3 +1,4 @@
+use futures::Future;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -6,7 +7,7 @@ use std::{
 
 use super::{
     context_client::{ActorContextClient, DaprActorInterface},
-    Actor, ActorError, ActorFactory, ActorInstance, ActorMethod,
+    Actor, ActorError, ActorFactory, ActorInstance, ActorMethod, DecoratedActorMethod,
 };
 
 pub struct ActorTypeRegistration<TClient>
@@ -16,7 +17,7 @@ where
 {
     name: String,
     factory: ActorFactory<TClient>,
-    methods: HashMap<String, ActorMethod>,
+    methods: HashMap<String, Box<ActorMethod>>,
 }
 
 impl<TClient> ActorTypeRegistration<TClient>
@@ -33,16 +34,18 @@ where
         }
     }
 
-    pub fn register_method<TActor, TInput, TMethod, TOutput>(mut self, method_name: &str, method: TMethod) -> Self
+    pub fn register_method<TActor, TInput, TMethod, TOutput, TFuture>(mut self, method_name: &str, method: TMethod) -> Self
     where
         TActor: Actor,
         TInput: for<'a> Deserialize<'a>,
         TOutput: Serialize,
-        TMethod: Fn(&mut TActor, TInput) -> Result<TOutput, ActorError> + 'static,
+        TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Unpin,
+        TMethod: Fn(&mut TActor, &TInput) -> TFuture + 'static
     {
-        let decorated_method = super::decorate_actor_method(method);
+        //let decorated_method = super::decorate_actor_method(method);
+        let decorated_method = DecoratedActorMethod::factory(method);
         self.methods
-            .insert(method_name.to_string(), decorated_method);
+            .insert(method_name.to_string(), Box::new(decorated_method));
         self
     }
 
@@ -51,12 +54,13 @@ where
         Arc::new(Mutex::new(actor))
     }
 
-    fn invoke_method(&self, actor: &mut dyn Actor, method_name: &str, data: Vec<u8>) -> Result<Vec<u8>, ActorError> {
+    async fn invoke_method(&self, actor: &mut dyn Actor, method_name: &str, data: Vec<u8>) -> Result<Vec<u8>, ActorError> {
         let method = match self.methods.get(method_name) {
             Some(m) => m,
             None => return Err(ActorError::MethodNotFound),
-        };
-        method(actor, data)
+        };        
+        
+        method(actor, data).await
     }
 }
 
@@ -100,7 +104,7 @@ where
         self.registered_actors_types.insert(name, registration);
     }
 
-    pub async fn invoke_actor(&mut self, actor_type: &str, id: &str, method: &str, data: Vec<u8>) -> Result<Vec<u8>, ActorError> {
+    pub async fn invoke_actor<'c>(&'c mut self, actor_type: &str, id: &str, method: &str, data: Vec<u8>) -> Result<Vec<u8>, ActorError> {
         let actor = self.get_or_create_actor(actor_type, id).await?;
         let mut mg = actor.lock();
         let actor = mg.as_deref_mut().unwrap();
@@ -110,7 +114,7 @@ where
             None => return Err(ActorError::ActorNotFound),
         };
 
-        reg.invoke_method(actor.as_mut(), method, data)
+        reg.invoke_method(actor.as_mut(), method, data).await
     }
 
     pub async fn deactivate_actor(&mut self, name: &str, id: &str) -> Result<(), ActorError> {
