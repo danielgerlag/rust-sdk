@@ -30,7 +30,7 @@ pub trait Actor: Send + Sync {
 }
 
 
-pub type ActorMethod = dyn Fn(&mut dyn Actor, Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;
+pub type ActorMethod = dyn Fn(Arc<Mutex<Box<dyn Actor>>>, Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;
 
 //for<'a, 'b> Fn<(&'a mut (dyn Actor + 'a), &'b Vec<u8>)>
 
@@ -74,19 +74,20 @@ pub type ActorMethod = dyn Fn(&mut dyn Actor, Vec<u8>) -> Pin<Box<dyn Future<Out
 //     Box::new(f)
 // }
 
-pub struct DecoratedActorMethod<'b, TActor, TInput, TMethod, TOutput, TFuture> 
+pub struct DecoratedActorMethod<TActor, TInput, TMethod, TOutput, TFuture> 
 where 
-    TActor: Actor, 
+    TActor: Actor + Unpin, 
     TInput: for<'a> Deserialize<'a>, 
     TOutput: Serialize,
     TFuture: Future<Output = Result<TOutput, ActorError>> + Sized,
-    TMethod: Fn(&mut TActor, &TInput) -> TFuture + 'b
+    TMethod: Fn(&mut TActor, &TInput) -> TFuture
 {
     input: Option<Pin<Box<TInput>>>,
     method_future: Option<Pin<Box<TFuture>>>,
-    method: Box<&'b TMethod>,
-    actor: Box<&'b mut TActor>,
+    method: Arc<Mutex<TMethod>>,
+    actor: Arc<Mutex<Box<dyn Actor>>>, //Arc<Mutex<TActor>>,
     serialized_input: Box<Vec<u8>>,
+    _phantom: std::marker::PhantomData<TActor>
 }
 
 
@@ -128,13 +129,13 @@ where
 //     }
 // }
 
-impl<'b, TActor, TInput, TMethod, TOutput, TFuture> Future for DecoratedActorMethod<'b, TActor, TInput, TMethod, TOutput, TFuture> 
+impl<TActor, TInput, TMethod, TOutput, TFuture> Future for DecoratedActorMethod<TActor, TInput, TMethod, TOutput, TFuture> 
 where 
-    TActor: Actor, 
+    TActor: Actor + Unpin, 
     TInput: for<'a> Deserialize<'a>, 
     TOutput: Serialize,
     TFuture: Future<Output = Result<TOutput, ActorError>> + Sized,
-    TMethod: Fn(&mut TActor, &TInput) -> TFuture + 'b
+    TMethod: Fn(&mut TActor, &TInput) -> TFuture
 {
     type Output = Result<Vec<u8>, ActorError>;
 
@@ -153,8 +154,14 @@ where
         
         if let None = this.method_future {
             //let method_ref = this.method; //.as_ref();
-            let input_ref = this.input.as_ref().unwrap().as_ref().get_ref();            
-            let fut = this.method.as_ref()(this.actor.as_mut(), input_ref);            
+            let input_ref = this.input.as_ref().unwrap().as_ref().get_ref();
+            let m = this.method.lock().unwrap();
+            let mut actor = this.actor.lock().unwrap();
+            let a2 = actor.as_mut();
+            
+            let well_known_actor = unsafe { &mut *(a2 as *mut dyn Actor as *mut TActor) };
+            
+            let fut = m(well_known_actor, input_ref);            
             this.method_future = Some(Box::pin(fut));
         }
 

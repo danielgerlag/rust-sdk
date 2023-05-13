@@ -17,10 +17,10 @@ where
 {
     name: String,
     factory: ActorFactory<TClient>,
-    methods: HashMap<String, Pin<Box<ActorMethod>>>,
+    methods: HashMap<String, Arc<Pin<Box<ActorMethod>>>>,
 }
 
-impl<'b, TClient> ActorTypeRegistration<TClient>
+impl<TClient> ActorTypeRegistration<TClient>
 where
     TClient: DaprActorInterface,
     TClient: Clone,
@@ -34,26 +34,30 @@ where
         }
     }
 
-    pub fn register_method<TActor, TInput, TMethod, TOutput, TFuture>(mut self, method_name: &str, method: &'b TMethod) -> Self
+    pub fn register_method<TActor, TInput, TMethod, TOutput, TFuture>(mut self, method_name: &str, method: TMethod) -> Self
     where
-        TActor: Actor + 'b,
-        TInput: for<'a> Deserialize<'a> + 'b,
-        TOutput: Serialize + 'b,
-        TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Unpin + 'b,
-        TMethod: Fn(&mut TActor, &TInput) -> TFuture + 'b
+        TActor: Actor + Unpin + 'static,
+        TInput: for<'a> Deserialize<'a> + 'static,
+        TOutput: Serialize + 'static,
+        TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Unpin + 'static,
+        TMethod: Fn(&mut TActor, &TInput) -> TFuture + 'static
     {
+            let m2 = Arc::new(Mutex::new(method));
+            let decorated_method = move |actor: Arc<Mutex<Box<dyn Actor>>>, data: Vec<u8>| -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
             
-            let decorated_method = move |actor: &'b mut dyn Actor, data: Vec<u8>| -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>> + 'b>> {
-            
-                let well_known_actor = unsafe { &mut *(actor as *mut dyn Actor as *mut TActor) };
-                
+                //let actor2 = actor.lock().unwrap();
+
+                //let well_known_actor = unsafe { &mut *(actor as *mut dyn Actor as *mut TActor) };
+                //let well_known_actor = unsafe { &mut *(&actor as *mut Arc<Mutex<dyn Actor>> as *mut Arc<Mutex<TActor>>) };
+                //let a = *well_known_actor;
                 
                 let fm = DecoratedActorMethod {
                     input: None,
                     method_future: None,
-                    method: Box::new(method),
-                    actor: Box::new(well_known_actor),
+                    method: m2.clone(),
+                    actor: actor,
                     serialized_input: Box::new(data),
+                    _phantom: std::marker::PhantomData::<TActor>::default()
                 };            
                 //let fm3 = unsafe { *(&fm as *const dyn Future<Output = Result<Vec<u8>, ActorError>>) };
                 
@@ -72,7 +76,7 @@ where
         
         //let decorated_method = DecoratedActorMethod::factory(method);
         self.methods
-            .insert(method_name.to_string(), etf);
+            .insert(method_name.to_string(), Arc::new(etf));
         self
     }
 
@@ -81,12 +85,12 @@ where
         Arc::new(Mutex::new(actor))
     }
 
-    async fn invoke_method(&self, actor: &'b mut dyn Actor, method_name: &str, data: Vec<u8>) -> Result<Vec<u8>, ActorError> {
+    async fn invoke_method(&self, actor: Arc<Mutex<Box<dyn Actor>>>, method_name: &str, data: Vec<u8>) -> Result<Vec<u8>, ActorError> {
         let method = match self.methods.get(method_name) {
             Some(m) => m,
             None => return Err(ActorError::MethodNotFound),
         };        
-        let m = method.as_ref().get_ref();
+        let m = method.as_ref().as_ref();
         
         m(actor, data).await
     }
@@ -136,7 +140,6 @@ where
         let actor = self.get_or_create_actor(actor_type, id).await?;
         //actor.l
         
-        let mut mg = actor.lock().unwrap();
         //mg.
         //let actor2 = mg.as_deref_mut().unwrap();
         
@@ -145,7 +148,7 @@ where
             None => return Err(ActorError::ActorNotFound),
         };
 
-        reg.invoke_method(mg.as_mut(), method, data).await
+        reg.invoke_method(actor, method, data).await
     }
 
     pub async fn deactivate_actor(&mut self, name: &str, id: &str) -> Result<(), ActorError> {
