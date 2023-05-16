@@ -7,7 +7,7 @@ use std::{
 
 use super::{
     context_client::{ActorContextClient, DaprActorInterface},
-    Actor, ActorError, ActorFactory, ActorInstance, ActorMethod, DecoratedActorMethod, ActorMethodContainer,
+    Actor, ActorError, ActorFactory, ActorInstance, ActorMethod, DecoratedActorMethod, ActorMethodContainer, AsyncActorFn,
 };
 
 pub struct ActorTypeRegistration<TClient>
@@ -43,7 +43,7 @@ where
         TOutput: Serialize + Unpin,
         //TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send,
         
-        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> BoxFuture<'a, Result<TOutput, ActorError>>
+        TMethod: AsyncActorFn<TActor, TInput, TOutput> + 'static
     {
         //self.register_method(method_name, method)
         todo!()
@@ -56,7 +56,7 @@ where
         TOutput: Serialize + Unpin + 'static,
         //TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send,
         
-        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> BoxFuture<'a, Result<TOutput, ActorError>> + 'static
+        TMethod: AsyncActorFn<TActor, TInput, TOutput> + 'static
     {
         //     let m2 = Arc::new(Mutex::new(method));
         //     let decorated_method = move |actor: Arc<Mutex<Box<dyn Actor>>>, data: Vec<u8>| -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
@@ -256,6 +256,9 @@ where
         self.deactivate_all();
     }
 }
+
+
+
 
 #[cfg(test)]
 mod tests;

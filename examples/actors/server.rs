@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         //.register_method::<MyActor, MyRequest, MyResponse, _, _>("do_stuff", MyActor::do_stuff));
         //.register_method("do_stuff", MyActor::do_stuff));
         //.register_method2("do_stuff", |a, b| Box::pin(MyActor::do_stuff(a, b))));
-        .register_method2("do_stuff", MyActor::do_stuff2));
+        .register_method2("do_stuff", MyActor::do_stuff));
         //.register_method("do_stuff2", MyActor::do_stuff));
         
     
