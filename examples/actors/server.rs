@@ -29,25 +29,26 @@ impl MyActor {
         Ok(MyResponse { available: true })
     }
 
-    fn do_stuff2<'a>(&'a mut self, data: &'a MyRequest) -> impl Future<Output = Result<MyResponse, ActorError>> + 'a  {
+    fn do_stuff2<'a>(&'a mut self, data: &'a MyRequest) -> BoxFuture<'a, Result<MyResponse, ActorError>> {
         async move { 
             println!("doing stuff with {}", data.name);
             let r = self.client.get_actor_state("key1");
             println!("get_actor_state {:?}", r);
             
             Ok(MyResponse { available: true })
-        }
+        }.boxed()
     }
 
-    fn do_stuff3(&mut self, data: &MyRequest) -> impl Future<Output = Result<MyResponse, ActorError>> {
-        async move { 
-            // println!("doing stuff with {}", data.name);
-            // let r = self.client.get_actor_state("key1");
-            // println!("get_actor_state {:?}", r);
+    // fn do_stuff3(&mut self, data: &MyRequest) -> impl Future<Output = Result<MyResponse, ActorError>> {
+        
+    //     async move { 
+    //         println!("doing stuff with {}", &data.name);
+    //         //let r = self.client.get_actor_state("key1");
+    //         //println!("get_actor_state {:?}", r);
             
-            Ok(MyResponse { available: true })
-        }
-    }
+    //         Ok(MyResponse { available: true })
+    //     }.boxed()
+    // }
 
     
 
@@ -94,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         //.register_method::<MyActor, MyRequest, MyResponse, _, _>("do_stuff", MyActor::do_stuff));
         //.register_method("do_stuff", MyActor::do_stuff));
         //.register_method2("do_stuff", |a, b| Box::pin(MyActor::do_stuff(a, b))));
-        .register_method2("do_stuff", MyActor::do_stuff3));
+        .register_method2("do_stuff", MyActor::do_stuff2));
         //.register_method("do_stuff2", MyActor::do_stuff));
         
     

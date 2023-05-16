@@ -20,7 +20,6 @@ where
     methods: HashMap<String, Box<dyn ActorMethod>>,
 }
 
-
 impl<TClient> ActorTypeRegistration<TClient>
 where
     TClient: DaprActorInterface,
@@ -34,28 +33,30 @@ where
             methods: HashMap::new(),
         }
     }
+
     
-    pub fn register_method2<TActor, TInput, TOutput, TMethod, TFuture>(mut self, method_name: &str, method: TMethod) -> Self
+    
+    pub fn register_method2<TActor, TInput, TOutput, TMethod>(mut self, method_name: &str, method: TMethod) -> Self
     where
-        TActor: Actor + Unpin + 'static,
-        TInput: for<'a> Deserialize<'a> + Send + 'static,
-        TOutput: Serialize + 'static,
-        TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send,
-        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture
+        TActor: Actor + Unpin + Unpin,
+        TInput: for<'a> Deserialize<'a> + Send + Unpin,
+        TOutput: Serialize + Unpin,
+        //TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send,
+        
+        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> BoxFuture<'a, Result<TOutput, ActorError>>
     {
         //self.register_method(method_name, method)
         todo!()
     }
    
-    pub fn register_method<TActor, TInput, TOutput, TMethod, TFuture>(mut self, method_name: &str, method: TMethod) -> Self
+    pub fn register_method<TActor, TInput, TOutput, TMethod>(mut self, method_name: &str, method: TMethod) -> Self
     where
         TActor: Actor + Unpin + 'static,
-        TInput: for<'a> Deserialize<'a> + Send + 'static,
-        TOutput: Serialize + 'static,
-        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture + 'static,
-        TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send + 'static,
-        //TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> BoxFuture<'static, Result<TOutput, ActorError>> + Send + Sync + 'static
-        //TMethod: Fn(&mut TActor, &TInput) -> dyn Future<Output = Result<TOutput, ActorError>>
+        TInput: for<'a> Deserialize<'a> + Send + Unpin + 'static,
+        TOutput: Serialize + Unpin + 'static,
+        //TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send,
+        
+        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> BoxFuture<'a, Result<TOutput, ActorError>> + 'static
     {
         //     let m2 = Arc::new(Mutex::new(method));
         //     let decorated_method = move |actor: Arc<Mutex<Box<dyn Actor>>>, data: Vec<u8>| -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
