@@ -1,4 +1,4 @@
-use futures::Future;
+use futures::{Future, future::BoxFuture};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -7,7 +7,7 @@ use std::{
 
 use super::{
     context_client::{ActorContextClient, DaprActorInterface},
-    Actor, ActorError, ActorFactory, ActorInstance, ActorMethod, DecoratedActorMethod,
+    Actor, ActorError, ActorFactory, ActorInstance, ActorMethod, DecoratedActorMethod, ActorMethodContainer,
 };
 
 pub struct ActorTypeRegistration<TClient>
@@ -17,8 +17,9 @@ where
 {
     name: String,
     factory: ActorFactory<TClient>,
-    methods: HashMap<String, Arc<Pin<Box<ActorMethod>>>>,
+    methods: HashMap<String, Box<dyn ActorMethod>>,
 }
+
 
 impl<TClient> ActorTypeRegistration<TClient>
 where
@@ -33,50 +34,69 @@ where
             methods: HashMap::new(),
         }
     }
-
-    pub fn register_method<TActor, TInput, TMethod, TOutput, TFuture>(mut self, method_name: &str, method: TMethod) -> Self
+    
+    pub fn register_method2<TActor, TInput, TOutput, TMethod, TFuture>(mut self, method_name: &str, method: TMethod) -> Self
     where
         TActor: Actor + Unpin + 'static,
-        TInput: for<'a> Deserialize<'a> + 'static,
+        TInput: for<'a> Deserialize<'a> + Send + 'static,
         TOutput: Serialize + 'static,
-        TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Unpin + 'static,
-        TMethod: Fn(&mut TActor, &TInput) -> TFuture + 'static
+        TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send,
+        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture
     {
-            let m2 = Arc::new(Mutex::new(method));
-            let decorated_method = move |actor: Arc<Mutex<Box<dyn Actor>>>, data: Vec<u8>| -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
+        //self.register_method(method_name, method)
+        todo!()
+    }
+   
+    pub fn register_method<TActor, TInput, TOutput, TMethod, TFuture>(mut self, method_name: &str, method: TMethod) -> Self
+    where
+        TActor: Actor + Unpin + 'static,
+        TInput: for<'a> Deserialize<'a> + Send + 'static,
+        TOutput: Serialize + 'static,
+        TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture + 'static,
+        TFuture: for<'a> Future<Output = Result<TOutput, ActorError>> + Sized + Send + 'static,
+        //TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> BoxFuture<'static, Result<TOutput, ActorError>> + Send + Sync + 'static
+        //TMethod: Fn(&mut TActor, &TInput) -> dyn Future<Output = Result<TOutput, ActorError>>
+    {
+        //     let m2 = Arc::new(Mutex::new(method));
+        //     let decorated_method = move |actor: Arc<Mutex<Box<dyn Actor>>>, data: Vec<u8>| -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
             
-                //let actor2 = actor.lock().unwrap();
+        //         //let actor2 = actor.lock().unwrap();
 
-                //let well_known_actor = unsafe { &mut *(actor as *mut dyn Actor as *mut TActor) };
-                //let well_known_actor = unsafe { &mut *(&actor as *mut Arc<Mutex<dyn Actor>> as *mut Arc<Mutex<TActor>>) };
-                //let a = *well_known_actor;
+        //         //let well_known_actor = unsafe { &mut *(actor as *mut dyn Actor as *mut TActor) };
+        //         //let well_known_actor = unsafe { &mut *(&actor as *mut Arc<Mutex<dyn Actor>> as *mut Arc<Mutex<TActor>>) };
+        //         //let a = *well_known_actor;
                 
-                let fm = DecoratedActorMethod {
-                    input: None,
-                    method_future: None,
-                    method: m2.clone(),
-                    actor: actor,
-                    serialized_input: Box::new(data),
-                    _phantom: std::marker::PhantomData::<TActor>::default()
-                };            
-                //let fm3 = unsafe { *(&fm as *const dyn Future<Output = Result<Vec<u8>, ActorError>>) };
+        //         let fm = DecoratedActorMethod {
+        //             input: None,
+        //             method_future: None,
+        //             method: m2.clone(),
+        //             actor: actor,
+        //             serialized_input: Box::new(data),
+        //             _phantom: std::marker::PhantomData::<TActor>::default()
+        //         };            
+        //         //let fm3 = unsafe { *(&fm as *const dyn Future<Output = Result<Vec<u8>, ActorError>>) };
                 
-                let b1 = Box::pin(fm);
-                let c = b1 as Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;
+        //         let b1 = Box::pin(fm);
+        //         let c = b1 as Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;
 
-                //let fm2: &(dyn Future<Output = Result<Vec<u8>, ActorError>>) = &fm as &dyn Future<Output = Result<Vec<u8>, ActorError>>;
+        //         //let fm2: &(dyn Future<Output = Result<Vec<u8>, ActorError>>) = &fm as &dyn Future<Output = Result<Vec<u8>, ActorError>>;
                 
-                //Box::pin(fm2)
-                c
-        };
-        //let d2: &'b dyn Fn(&'b mut dyn Actor, &'b Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>> + 'b>> = &decorated_method;
-        let etf = Box::pin(decorated_method);
+        //         //Box::pin(fm2)
+        //         c
+        // };
+        // //let d2: &'b dyn Fn(&'b mut dyn Actor, &'b Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>> + 'b>> = &decorated_method;
+        // let etf = Box::pin(decorated_method);
         
-        //let decorated_method = &f;
+        // //let decorated_method = &f;
         
-        //let decorated_method = DecoratedActorMethod::factory(method);
+        // //let decorated_method = DecoratedActorMethod::factory(method);
+        // self.methods
+        //     .insert(method_name.to_string(), Arc::new(etf));
+
+        let amc = ActorMethodContainer::new(method);
         self.methods
-            .insert(method_name.to_string(), Arc::new(etf));
+            .insert(method_name.to_string(), Box::new(amc));
+
         self
     }
 
@@ -90,9 +110,9 @@ where
             Some(m) => m,
             None => return Err(ActorError::MethodNotFound),
         };        
-        let m = method.as_ref().as_ref();
-        
-        m(actor, data).await
+        let m = method.build(actor, data);
+
+        m.await
     }
 }
 

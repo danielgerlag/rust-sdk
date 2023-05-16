@@ -1,5 +1,7 @@
-use std::str::from_utf8;
+use std::{str::from_utf8, todo, print};
+use async_trait::async_trait;
 use dapr::{server::actor::{self, ActorError, context_client::{ActorContextClient}, Actor, runtime::ActorTypeRegistration}, client::{TonicClient}};
+use futures::{Future, future::BoxFuture, FutureExt};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -20,12 +22,35 @@ struct MyActor {
 
 impl MyActor {
     
-    fn do_stuff(&mut self, data: MyRequest) -> Result<MyResponse, ActorError> {        
+    async fn do_stuff(&mut self, data: &MyRequest) -> Result<MyResponse, ActorError> {
         println!("doing stuff with {}", data.name);
         let r = self.client.get_actor_state("key1");
         println!("get_actor_state {:?}", r);
         Ok(MyResponse { available: true })
     }
+
+    fn do_stuff2<'a>(&'a mut self, data: &'a MyRequest) -> impl Future<Output = Result<MyResponse, ActorError>> + 'a  {
+        async move { 
+            println!("doing stuff with {}", data.name);
+            let r = self.client.get_actor_state("key1");
+            println!("get_actor_state {:?}", r);
+            
+            Ok(MyResponse { available: true })
+        }
+    }
+
+    fn do_stuff3(&mut self, data: &MyRequest) -> impl Future<Output = Result<MyResponse, ActorError>> {
+        async move { 
+            // println!("doing stuff with {}", data.name);
+            // let r = self.client.get_actor_state("key1");
+            // println!("get_actor_state {:?}", r);
+            
+            Ok(MyResponse { available: true })
+        }
+    }
+
+    
+
 }
 
 
@@ -59,13 +84,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     let mut dapr_server = dapr::server::DaprHttpServer::new().await;
+
+    let f = MyActor::do_stuff;
     
     dapr_server.register_actor(ActorTypeRegistration::new("MyActor", |actor_type, id, client| Box::new(MyActor{
             actor_type, 
             id, 
             client}))
-        .register_method("do_stuff", MyActor::do_stuff)
-        .register_method("do_stuff2", MyActor::do_stuff));
+        //.register_method::<MyActor, MyRequest, MyResponse, _, _>("do_stuff", MyActor::do_stuff));
+        //.register_method("do_stuff", MyActor::do_stuff));
+        //.register_method2("do_stuff", |a, b| Box::pin(MyActor::do_stuff(a, b))));
+        .register_method2("do_stuff", MyActor::do_stuff3));
+        //.register_method("do_stuff2", MyActor::do_stuff));
         
     
     dapr_server.start(None, None).await?;

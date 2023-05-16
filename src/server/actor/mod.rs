@@ -1,5 +1,5 @@
 use std::{sync::Arc, sync::Mutex, error::Error, pin::Pin, task::Poll};
-use futures::{Future, FutureExt};
+use futures::{Future, FutureExt, future::BoxFuture};
 use serde::{Serialize, Deserialize};
 
 use self::context_client::{ActorContextClient};
@@ -30,112 +30,102 @@ pub trait Actor: Send + Sync {
 }
 
 
-pub type ActorMethod = dyn Fn(Arc<Mutex<Box<dyn Actor>>>, Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;
+//pub type ActorMethod = dyn Fn(Arc<Mutex<Box<dyn Actor>>>, Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;
 
-//for<'a, 'b> Fn<(&'a mut (dyn Actor + 'a), &'b Vec<u8>)>
+pub trait ActorMethod {
+    fn build(&self, actor: Arc<Mutex<Box<dyn Actor>>>, data: Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;    
+}
 
-
-// pub fn decorate_actor_method<'b, TActor, TInput, TMethod, TOutput, TFuture>(method: TMethod) -> Box<ActorMethod>
-//     where 
-//         TActor: Actor + Send + Sync, 
-//         TInput: for<'a> Deserialize<'a> + Send + Sync, 
-//         TOutput: Serialize + Send + Sync,
-//         TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Send + Sync,
-//         TMethod: Fn(&mut TActor, TInput) -> TFuture + Sync + 'static
-// {       
-//     let m2 = &method;
-//     let f =  move |actor: Pin<Box<dyn Actor>>, data: Vec<u8>| -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
-//         log::debug!("Invoking actor method with data: {:?}", data);        
-//         let args = serde_json::from_slice::<TInput>(&data);
-//         if args.is_err() {
-//             log::error!("Failed to deserialize actor method arguments - {:?}", args.err());
-//             return async { Err(ActorError::SerializationError()) }.boxed();
-//         }
-
-//         let zz = async move { 
-
-//             let a2 = unsafe { actor.as_mut().get_unchecked_mut() };
-
-
-//             let well_known_actor = unsafe { &mut *(a2 as *mut dyn Actor as *mut TActor) };
-
-//             match m2(well_known_actor, args.unwrap()).await {
-//                 Ok(r) => {
-//                     let serialized = serde_json::to_vec(&r).unwrap();
-//                     Ok(serialized)
-//                 },
-//                 Err(e) => Err(e)
-//             }
-//         };
-
-//         zz.boxed()
-//     };
-
-//     Box::new(f)
-// }
-
-pub struct DecoratedActorMethod<TActor, TInput, TMethod, TOutput, TFuture> 
+struct ActorMethodContainer<TActor, TInput, TMethod, TOutput, TFuture>  
 where 
     TActor: Actor + Unpin, 
     TInput: for<'a> Deserialize<'a>, 
     TOutput: Serialize,
+    TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Send,
+    TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture
+{
+    method: Arc<Mutex<TMethod>>,
+
+    _actor: std::marker::PhantomData<TActor>,
+    _input: std::marker::PhantomData<TInput>,
+    _output: std::marker::PhantomData<TOutput>,
+    //_lifetime: std::marker::PhantomData<&'b ()>,
+    //_future: std::marker::PhantomData<TFuture>,
+}
+
+//pub type ActorMethodSig<TActor, TInput, TOutput> = dyn for<'a>Fn(&'a mut TActor, &'a TInput) -> dyn Future<Output = Result<TOutput, ActorError>>;
+
+
+
+impl<TActor, TInput, TMethod, TOutput, TFuture> ActorMethodContainer<TActor, TInput, TMethod, TOutput, TFuture>  
+where 
+    TActor: Actor + Unpin, 
+    TInput: for<'a> Deserialize<'a>, 
+    TOutput: Serialize,
+    TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Send,
+    TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) ->TFuture
+{
+    fn new(method: TMethod) -> Self {
+        ActorMethodContainer {
+            method: Arc::new(Mutex::new(method)),
+            _actor: std::marker::PhantomData::<TActor>::default(),
+            _input: std::marker::PhantomData::<TInput>::default(),
+            _output: std::marker::PhantomData::<TOutput>::default(),
+            //_lifetime: std::marker::PhantomData,            
+            //_future: std::marker::PhantomData::<TFuture>::default(),
+        }
+    }
+}
+
+impl<TActor, TInput, TMethod, TOutput, TFuture> ActorMethod for ActorMethodContainer<TActor, TInput, TMethod, TOutput, TFuture>  
+where 
+    TActor: Actor + Unpin + 'static, 
+    TInput: for<'a> Deserialize<'a> + Send + 'static, 
+    TOutput: Serialize + 'static,
+    TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Send + 'static,
+    TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture + 'static
+{
+
+    fn build(&self, actor: Arc<Mutex<Box<dyn Actor>>>, data: Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
+        //let m = self.method.as_ref();
+        //m.
+        let fm = DecoratedActorMethod {
+            input: None,
+            method_future: None,
+            method: self.method.clone(),
+            actor: actor,
+            serialized_input: Box::new(data),
+            _phantom: std::marker::PhantomData::<TActor>::default()
+        };
+        
+        Box::pin(fm)
+    }
+}
+
+
+pub struct DecoratedActorMethod<'b, TActor, TInput, TMethod, TOutput, TFuture> 
+where 
+    TActor: Actor + Unpin + 'b, 
+    TInput: for<'a> Deserialize<'a> + 'b, 
+    TOutput: Serialize + 'b,
     TFuture: Future<Output = Result<TOutput, ActorError>> + Sized,
-    TMethod: Fn(&mut TActor, &TInput) -> TFuture
+    TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture
 {
     input: Option<Pin<Box<TInput>>>,
-    method_future: Option<Pin<Box<TFuture>>>,
+    method_future: Option<BoxFuture<'b, Result<TOutput, ActorError>>>,
     method: Arc<Mutex<TMethod>>,
     actor: Arc<Mutex<Box<dyn Actor>>>, //Arc<Mutex<TActor>>,
     serialized_input: Box<Vec<u8>>,
     _phantom: std::marker::PhantomData<TActor>
 }
 
-
-// impl<'b, TActor, TInput, TMethod, TOutput, TFuture> DecoratedActorMethod<'b, TActor, TInput, TMethod, TOutput, TFuture> 
-// where 
-//     TActor: Actor + 'b,
-//     TInput: for<'a> Deserialize<'a> + 'b, 
-//     TOutput: Serialize + 'b,
-//     TFuture: Future<Output = Result<TOutput, ActorError>> + Unpin + 'b,
-//     TMethod: Fn(&mut TActor, &TInput) -> TFuture + 'b
-// {
-//     pub fn factory(method: TMethod) -> &'b dyn Fn(&mut dyn Actor, &Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> {
-        
-//         let f = move |actor: &'b mut dyn Actor, data: &'b Vec<u8>| {
-            
-//             let well_known_actor = unsafe { &mut *(actor as *mut dyn Actor as *mut TActor) };
-            
-            
-//             let fm = DecoratedActorMethod {
-//                 input: None,
-//                 method_future: None,
-//                 method: Box::new(&method),
-//                 actor: Box::new(well_known_actor),
-//                 serialized_input: Box::new(data),
-//             };            
-//             //let fm3 = unsafe { *(&fm as *const dyn Future<Output = Result<Vec<u8>, ActorError>>) };
-            
-//             let b1 = Box::pin(fm);
-//             let c = b1 as Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>>;
-
-//             //let fm2: &(dyn Future<Output = Result<Vec<u8>, ActorError>>) = &fm as &dyn Future<Output = Result<Vec<u8>, ActorError>>;
-            
-//             //Box::pin(fm2)
-//             c
-//         };
-
-//         let cap: &'b dyn Fn(&mut dyn Actor, &Vec<u8>) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ActorError>>>> = &f;
-//         cap
-//     }
-// }
-
-impl<TActor, TInput, TMethod, TOutput, TFuture> Future for DecoratedActorMethod<TActor, TInput, TMethod, TOutput, TFuture> 
+impl<TActor, TInput, TMethod, TOutput, TFuture> Future for DecoratedActorMethod<'static, TActor, TInput, TMethod, TOutput, TFuture> 
 where 
     TActor: Actor + Unpin, 
     TInput: for<'a> Deserialize<'a>, 
     TOutput: Serialize,
-    TFuture: Future<Output = Result<TOutput, ActorError>> + Sized,
-    TMethod: Fn(&mut TActor, &TInput) -> TFuture
+    TFuture: Future<Output = Result<TOutput, ActorError>> + Sized + Send + 'static,
+    TMethod: for<'a>Fn(&'a mut TActor, &'a TInput) -> TFuture
 {
     type Output = Result<Vec<u8>, ActorError>;
 
